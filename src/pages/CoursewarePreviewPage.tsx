@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../api/supabase'
+import { fetchEvalDetail, type EvalDetail } from '../api/courseware'
 
 const DIMENSION_LABELS: Record<string, string> = {
   d1: '知识准确性',
@@ -46,11 +47,19 @@ interface EvalRound {
   html_snapshot: string | null
 }
 
+function getScoreColor(score: number): string {
+  if (score >= 4) return '#34d399'
+  if (score >= 3) return '#fbbf24'
+  return '#f87171'
+}
+
 export default function CoursewarePreviewPage({ coursewareId }: { coursewareId: string }) {
   const [detail, setDetail] = useState<CoursewareDetail | null>(null)
   const [evalHistory, setEvalHistory] = useState<EvalRound[]>([])
   const [loading, setLoading] = useState(true)
   const [activeRound, setActiveRound] = useState<number | null>(null)
+  const [evalDetail, setEvalDetail] = useState<EvalDetail | null>(null)
+  const [expandedPanel, setExpandedPanel] = useState<string | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -83,6 +92,9 @@ export default function CoursewarePreviewPage({ coursewareId }: { coursewareId: 
           setEvalHistory(evals as EvalRound[])
           setActiveRound(evals[evals.length - 1].iteration_round)
         }
+
+        const detailData = await fetchEvalDetail(coursewareId)
+        setEvalDetail(detailData)
       } catch (e) {
         console.error('Failed to load courseware detail:', e)
       } finally {
@@ -91,6 +103,10 @@ export default function CoursewarePreviewPage({ coursewareId }: { coursewareId: 
     }
     load()
   }, [coursewareId])
+
+  const togglePanel = (panelId: string) => {
+    setExpandedPanel(prev => (prev === panelId ? null : panelId))
+  }
 
   if (loading) {
     return (
@@ -191,6 +207,7 @@ export default function CoursewarePreviewPage({ coursewareId }: { coursewareId: 
                   const rs = round.scores || {}
                   const isActive = round.iteration_round === activeRound
                   const hasContent = !!(round.file_url || round.html_snapshot)
+
                   return (
                     <div
                       key={round.iteration_round}
@@ -259,6 +276,205 @@ export default function CoursewarePreviewPage({ coursewareId }: { coursewareId: 
             </div>
           )}
         </div>
+
+        {/* --- 新增：AI评审详情面板区 --- */}
+        {evalDetail ? (
+          <div className="mt-8 space-y-4">
+            {/* 面板1：四维评审详情 */}
+            <div id="review-detail" className="card p-6">
+              <div
+                className="flex justify-between items-center cursor-pointer"
+                onClick={() => togglePanel('review-detail')}
+              >
+                <h3 className="text-lg font-semibold text-slate-200">四维评审详情</h3>
+                <span className="text-slate-400 transition-transform">
+                  {expandedPanel === 'review-detail' ? '▼' : '▶'}
+                </span>
+              </div>
+              
+              {expandedPanel === 'review-detail' && (
+                <div className="mt-6 border-t border-slate-700/50 pt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {Object.entries(DIMENSION_LABELS).map(([key, label]) => {
+                    const score = scores[key] || 0
+                    const feedback = evalDetail.feedbacks?.[key] || '暂无评语'
+                    const rawKeyMap: Record<string, keyof NonNullable<EvalDetail['audit_data']>> = {
+                      d1: 'a1_raw_output',
+                      d2: 'a2_raw_output',
+                      d3: 'b_raw_output',
+                      d4: 'c_raw_output'
+                    }
+                    const rawData = evalDetail.audit_data?.[rawKeyMap[key]]
+
+                    return (
+                      <div key={key} className="p-4 rounded-xl border border-slate-700/30" style={{ background: 'var(--bg-card)' }}>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-slate-300 font-medium">{label}</span>
+                          <span className="text-lg font-bold" style={{ color: getScoreColor(score) }}>
+                            {score.toFixed(1)}
+                          </span>
+                        </div>
+                        <div className="text-sm text-slate-400 mb-4 whitespace-pre-wrap leading-relaxed">
+                          {feedback}
+                        </div>
+                        {rawData && (
+                          <details className="text-xs text-slate-500">
+                            <summary className="cursor-pointer hover:text-slate-300 transition-colors">
+                              查看评审原文
+                            </summary>
+                            <pre className="mt-3 p-3 rounded overflow-auto max-h-60 whitespace-pre-wrap font-mono leading-normal" style={{ background: 'rgba(0,0,0,0.3)' }}>
+                              {rawData}
+                            </pre>
+                          </details>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* 面板2：Browser Use 交互测试 */}
+            {evalDetail.browser_use_result && (
+              <div id="browser-test" className="card p-6">
+                <div
+                  className="flex justify-between items-center cursor-pointer"
+                  onClick={() => togglePanel('browser-test')}
+                >
+                  <h3 className="text-lg font-semibold text-slate-200">Browser Use 交互测试</h3>
+                  <span className="text-slate-400 transition-transform">
+                    {expandedPanel === 'browser-test' ? '▼' : '▶'}
+                  </span>
+                </div>
+
+                {expandedPanel === 'browser-test' && (
+                  <div className="mt-6 border-t border-slate-700/50 pt-6 space-y-8 text-sm text-slate-300">
+                    {evalDetail.browser_use_result.screenshot_urls?.length > 0 && (
+                      <div>
+                        <h4 className="text-slate-200 font-medium mb-3">交互截图</h4>
+                        <div className="flex gap-4 overflow-x-auto pb-4">
+                          {evalDetail.browser_use_result.screenshot_urls.map((img, idx) => (
+                            <div key={idx} className="flex-none w-64">
+                              <a href={img.url} target="_blank" rel="noopener noreferrer" className="block mb-2">
+                                <img src={img.url} alt={img.label} className="w-full h-auto rounded-lg border border-slate-700/50 hover:border-indigo-400 transition-colors" />
+                              </a>
+                              <div className="text-center text-xs text-slate-500">{img.label}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {evalDetail.browser_use_result.video_urls?.length > 0 && (
+                      <div>
+                        <h4 className="text-slate-200 font-medium mb-3">操作录屏</h4>
+                        <div className="flex flex-col gap-6">
+                          {evalDetail.browser_use_result.video_urls.map((vid, idx) => (
+                            <div key={idx} className="w-full max-w-2xl">
+                              <video controls className="w-full rounded-lg border border-slate-700/50 shadow-lg">
+                                <source src={vid.url} type="video/webm" />
+                                您的浏览器不支持视频播放。
+                              </video>
+                              <div className="mt-2 text-xs text-slate-500">{vid.label}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {evalDetail.browser_use_result.interaction_log?.length > 0 && (
+                      <div>
+                        <h4 className="text-slate-200 font-medium mb-3">交互日志</h4>
+                        <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+                          {evalDetail.browser_use_result.interaction_log.map((log, idx) => (
+                            <div key={idx} className="p-4 rounded-lg border border-slate-700/30" style={{ background: 'rgba(0,0,0,0.15)' }}>
+                              <div className="font-medium text-slate-300 mb-2">{log.test_case}</div>
+                              <div className="text-slate-400 text-xs leading-relaxed">{log.description}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {evalDetail.browser_use_result.console_errors?.length > 0 && (
+                      <div>
+                        <h4 className="text-red-400 font-medium mb-3">Console 报错</h4>
+                        <ul className="list-disc pl-5 space-y-2 text-red-400/90 bg-red-950/20 p-4 rounded-lg border border-red-900/30">
+                          {evalDetail.browser_use_result.console_errors.map((err, idx) => (
+                            <li key={idx} className="break-words font-mono text-xs">{err}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 面板3：迭代趋势 */}
+            {evalDetail.history && evalDetail.history.length > 1 && (
+              <div id="iteration-trend" className="card p-6">
+                <div
+                  className="flex justify-between items-center cursor-pointer"
+                  onClick={() => togglePanel('iteration-trend')}
+                >
+                  <h3 className="text-lg font-semibold text-slate-200">迭代趋势</h3>
+                  <span className="text-slate-400 transition-transform">
+                    {expandedPanel === 'iteration-trend' ? '▼' : '▶'}
+                  </span>
+                </div>
+
+                {expandedPanel === 'iteration-trend' && (
+                  <div className="mt-6 border-t border-slate-700/50 pt-6 overflow-x-auto">
+                    <table className="w-full text-left text-sm text-slate-300">
+                      <thead>
+                        <tr className="border-b border-slate-700/50">
+                          <th className="py-3 px-4 font-medium text-slate-400">轮次</th>
+                          <th className="py-3 px-4 font-medium text-slate-400">知识准确性</th>
+                          <th className="py-3 px-4 font-medium text-slate-400">教学适配性</th>
+                          <th className="py-3 px-4 font-medium text-slate-400">系统健壮性</th>
+                          <th className="py-3 px-4 font-medium text-slate-400">视觉美观度</th>
+                          <th className="py-3 px-4 font-medium text-slate-400">综合得分</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {evalDetail.history.map((h, idx) => {
+                          const isLast = idx === evalDetail.history.length - 1
+                          return (
+                            <tr
+                              key={h.iteration_round}
+                              className={`border-b border-slate-700/30 last:border-0 ${isLast ? 'font-bold bg-white/5' : ''}`}
+                            >
+                              <td className="py-4 px-4">V{h.iteration_round}{isLast && ' (最新)'}</td>
+                              <td className="py-4 px-4" style={{ color: getScoreColor(h.scores.d1) }}>
+                                {(h.scores.d1 || 0).toFixed(1)}
+                              </td>
+                              <td className="py-4 px-4" style={{ color: getScoreColor(h.scores.d2) }}>
+                                {(h.scores.d2 || 0).toFixed(1)}
+                              </td>
+                              <td className="py-4 px-4" style={{ color: getScoreColor(h.scores.d3) }}>
+                                {(h.scores.d3 || 0).toFixed(1)}
+                              </td>
+                              <td className="py-4 px-4" style={{ color: getScoreColor(h.scores.d4) }}>
+                                {(h.scores.d4 || 0).toFixed(1)}
+                              </td>
+                              <td className="py-4 px-4 text-base" style={{ color: getScoreColor(h.composite_score) }}>
+                                {(h.composite_score || 0).toFixed(1)}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-8 card p-6 text-center text-slate-500">
+            暂无 AI 评审详细数据
+          </div>
+        )}
       </div>
     </div>
   )
@@ -266,9 +482,11 @@ export default function CoursewarePreviewPage({ coursewareId }: { coursewareId: 
 
 function getPreviewUrl(source: string, evalRound?: EvalRound | null): string | null {
   if (!evalRound) return null
+
   if (source === 'self_skill') {
     return evalRound.file_url || null
   }
+
   if (evalRound.html_snapshot) {
     if (evalRound.html_snapshot.startsWith('data:text/html;base64,')) {
       const base64 = evalRound.html_snapshot.replace('data:text/html;base64,', '')
@@ -278,11 +496,14 @@ function getPreviewUrl(source: string, evalRound?: EvalRound | null): string | n
       const blob = new Blob([bytes], { type: 'text/html' })
       return URL.createObjectURL(blob)
     }
+
     if (evalRound.html_snapshot.startsWith('data:')) {
       return evalRound.html_snapshot
     }
+
     const blob = new Blob([evalRound.html_snapshot], { type: 'text/html;charset=utf-8' })
     return URL.createObjectURL(blob)
   }
+
   return null
 }
