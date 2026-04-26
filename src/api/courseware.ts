@@ -26,7 +26,6 @@ const PLATFORM_LABELS: Record<string, string> = {
 const VALID_STATUSES = ['manual_review', 'iterating', 'done', 'pushed', 'approved', 'rejected']
 
 export async function fetchCoursewareComparison(): Promise<CoursewareCompareItem[]> {
-  // 查询有评测数据的课件
   const { data: coursewares } = await supabase
     .from('courseware')
     .select('id, title, source, scores, composite_score, status')
@@ -36,9 +35,8 @@ export async function fetchCoursewareComparison(): Promise<CoursewareCompareItem
     .order('created_at', { ascending: false })
 
   if (!coursewares || coursewares.length === 0) return []
-
-  // 查询所有相关的 evaluation_history
   const cwIds = coursewares.map(c => c.id)
+
   const { data: evalHistory } = await supabase
     .from('evaluation_history')
     .select('courseware_id, iteration_round, scores, composite_score')
@@ -47,7 +45,6 @@ export async function fetchCoursewareComparison(): Promise<CoursewareCompareItem
 
   if (!evalHistory || evalHistory.length === 0) return []
 
-  // 按 courseware_id 分组，取最新轮次
   const latestByCoursware = new Map<string, { scores: any; composite: number }>()
   evalHistory.forEach((e: any) => {
     if (!latestByCoursware.has(e.courseware_id)) {
@@ -58,7 +55,6 @@ export async function fetchCoursewareComparison(): Promise<CoursewareCompareItem
     }
   })
 
-  // 按 source 分组聚合
   const sourceAgg: Record<string, {
     titles: string[]
     d1Sum: number; d2Sum: number; d3Sum: number; d4Sum: number
@@ -69,12 +65,10 @@ export async function fetchCoursewareComparison(): Promise<CoursewareCompareItem
   coursewares.forEach((cw: any) => {
     const latest = latestByCoursware.get(cw.id)
     if (!latest) return
-
     const src = cw.source
     if (!sourceAgg[src]) {
       sourceAgg[src] = { titles: [], d1Sum: 0, d2Sum: 0, d3Sum: 0, d4Sum: 0, compositeSum: 0, count: 0 }
     }
-
     const agg = sourceAgg[src]
     agg.titles.push(cw.title)
     agg.d1Sum += latest.scores?.d1 || 0
@@ -109,7 +103,6 @@ export async function fetchCoursewareComparison(): Promise<CoursewareCompareItem
 }
 
 export async function fetchCoursewareVersions(): Promise<CoursewareVersion[]> {
-  // 查询有评测数据的课件
   const { data: coursewares } = await supabase
     .from('courseware')
     .select('id, source, status')
@@ -118,8 +111,8 @@ export async function fetchCoursewareVersions(): Promise<CoursewareVersion[]> {
     .order('created_at', { ascending: false })
 
   if (!coursewares || coursewares.length === 0) return []
-
   const cwIds = coursewares.map(c => c.id)
+
   const { data: evalHistory } = await supabase
     .from('evaluation_history')
     .select('courseware_id, iteration_round, composite_score')
@@ -128,13 +121,10 @@ export async function fetchCoursewareVersions(): Promise<CoursewareVersion[]> {
 
   if (!evalHistory || evalHistory.length === 0) return []
 
-  // 按 source 分组，取 round=1 和 round=MAX 的平均 composite_score
   const cwSourceMap = new Map(coursewares.map((c: any) => [c.id, c.source]))
-
   const sourceRounds: Record<string, { v1Scores: number[]; vLatestScores: number[]; maxRound: Record<string, number> }> = {}
-
-  // 先找每个 courseware_id 的最大轮次
   const maxRoundByCw = new Map<string, number>()
+
   evalHistory.forEach((e: any) => {
     const cur = maxRoundByCw.get(e.courseware_id) || 0
     if (e.iteration_round > cur) maxRoundByCw.set(e.courseware_id, e.iteration_round)
@@ -147,8 +137,8 @@ export async function fetchCoursewareVersions(): Promise<CoursewareVersion[]> {
     if (!sourceRounds[source]) {
       sourceRounds[source] = { v1Scores: [], vLatestScores: [], maxRound: {} }
     }
-
     const sr = sourceRounds[source]
+
     if (e.iteration_round === 1) {
       sr.v1Scores.push(e.composite_score || 0)
     }
@@ -167,7 +157,6 @@ export async function fetchCoursewareVersions(): Promise<CoursewareVersion[]> {
     const vLatestAvg = sr.vLatestScores.length > 0
       ? Math.round((sr.vLatestScores.reduce((a, b) => a + b, 0) / sr.vLatestScores.length) * 100) / 100
       : 0
-
     v1Row[source] = v1Avg
     vLatestRow[source] = vLatestAvg
   })
@@ -192,4 +181,61 @@ function extractCons(scores: { d1: number; d2: number; d3: number; d4: number })
   if (scores.d3 < 3) cons.push('系统稳定性欠佳')
   if (scores.d4 < 3) cons.push('视觉设计需优化')
   return cons
+}
+
+export interface EvalDetail {
+  feedbacks: Record<string, string>
+  browser_use_result: {
+    success: boolean
+    screenshot_urls: Array<{label: string, url: string}>
+    video_urls: Array<{label: string, url: string}>
+    interaction_log: Array<{test_case: string, description: string, steps?: any[]}>
+    console_errors: string[]
+  } | null
+  audit_data: {
+    a1_raw_output: string
+    a2_raw_output: string
+    b_raw_output: string
+    c_raw_output: string
+  } | null
+  history: Array<{
+    iteration_round: number
+    scores: {d1: number, d2: number, d3: number, d4: number}
+    composite_score: number
+  }>
+}
+
+export async function fetchEvalDetail(coursewareId: string): Promise<EvalDetail | null> {
+  // 1. 查 evaluation_history 表，where courseware_id = 参数，order by iteration_round DESC
+  const { data: evalHistory, error } = await supabase
+    .from('evaluation_history')
+    .select('iteration_round, feedbacks, browser_use_result, audit_data, scores, composite_score')
+    .eq('courseware_id', coursewareId)
+    .order('iteration_round', { ascending: false })
+
+  // 5. 如果没数据返回 null
+  if (error || !evalHistory || evalHistory.length === 0) {
+    return null
+  }
+
+  // 2. 取第一条（最新轮次）的 feedbacks, browser_use_result, audit_data
+  const latestRound = evalHistory[0]
+
+  // 3. 再查所有轮次的 iteration_round, scores, composite_score 作为 history
+  // 直接利用已查出的数据在内存中按 ASC 排序，减少一次查表请求
+  const history = evalHistory
+    .map(item => ({
+      iteration_round: item.iteration_round,
+      scores: item.scores,
+      composite_score: item.composite_score
+    }))
+    .sort((a, b) => a.iteration_round - b.iteration_round)
+
+  // 4. 返回 EvalDetail 对象
+  return {
+    feedbacks: latestRound.feedbacks || {},
+    browser_use_result: latestRound.browser_use_result || null,
+    audit_data: latestRound.audit_data || null,
+    history
+  }
 }
