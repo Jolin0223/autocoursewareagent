@@ -83,8 +83,6 @@ function renderLogWithLink(message: string, planTitle: string, coursewareId: str
 
 const agentColors = ['#6366f1', '#b3feff', '#34d399', '#fbbf24']
 const agentIcons = ['/icons/agent-1.png', '/icons/agent-2.png', '/icons/agent-3.png', '/icons/agent-4.png']
-const statusLabel: Record<string, string> = { running: '运行中', processing: '处理中', idle: '等待中', completed: '已完成', error: '异常' }
-const statusDotColor: Record<string, string> = { running: 'bg-emerald-400', processing: 'bg-amber-400', idle: 'bg-slate-500', completed: 'bg-emerald-400', error: 'bg-rose-400' }
 
 const agentSteps: Record<number, string[]> = {
   1: ['分析教师教学偏好', '扫描外部热门资源', '匹配需求与教师画像', '触发每日自动生产'],
