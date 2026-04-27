@@ -504,5 +504,6 @@ function getPreviewUrl(source: string, evalRound?: EvalRound | null): string | n
     const blob = new Blob([evalRound.html_snapshot], { type: 'text/html;charset=utf-8' })
     return URL.createObjectURL(blob)
   }
+
   return null
 }
