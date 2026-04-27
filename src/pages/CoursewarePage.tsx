@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
-import { fetchCoursewareComparison, fetchCoursewareVersions } from '../api/courseware'
-import type { CoursewareCompareItem, CoursewareVersion } from '../api/courseware'
+import { fetchCoursewareComparison, fetchCoursewareVersions, fetchEvalList } from '../api/courseware'
+import type { CoursewareCompareItem, CoursewareVersion, EvalListItem } from '../api/courseware'
 import { analyzeSkillIteration } from '../api/llm'
 import { useMockMode } from '../context/MockModeContext'
 import { coursewareComparison as mockComparison, coursewareVersions as mockVersions } from '../data/mockData'
@@ -20,12 +20,63 @@ const dimLabels: Record<string, string> = {
   d4: '视觉美观度',
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  self_skill: '自研Skill',
+  feixiang: '飞象老师',
+  laoshibang: '老师帮',
+}
+
+function getScoreColor(score: number): string {
+  if (score >= 4) return '#34d399'
+  if (score >= 3) return '#fbbf24'
+  return '#f87171'
+}
+
+function formatTime(dateStr: string): string {
+  const d = new Date(dateStr)
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function getCoursewarePreviewUrl(item: EvalListItem): string | null {
+  if (item.courseware_source === 'self_skill' && item.file_url) {
+    return item.file_url
+  }
+  if (item.html_snapshot) {
+    if (item.html_snapshot.startsWith('data:text/html;base64,')) {
+      const base64 = item.html_snapshot.replace('data:text/html;base64,', '')
+      const binary = atob(base64)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+      const blob = new Blob([bytes], { type: 'text/html' })
+      return URL.createObjectURL(blob)
+    }
+    if (item.html_snapshot.startsWith('data:')) {
+      return item.html_snapshot
+    }
+    const blob = new Blob([item.html_snapshot], { type: 'text/html;charset=utf-8' })
+    return URL.createObjectURL(blob)
+  }
+  return `${window.location.pathname}?preview=${item.courseware_id}`
+}
+
 export default function CoursewarePage() {
   const { isMock } = useMockMode()
   const [coursewareComparison, setCoursewareComparison] = useState<CoursewareCompareItem[]>([])
   const [coursewareVersions, setCoursewareVersions] = useState<CoursewareVersion[]>([])
   const [loading, setLoading] = useState(true)
   const [diagnosisAdvice, setDiagnosisAdvice] = useState<{ knowledge: string; teaching: string; interaction: string; visual: string } | null>(null)
+
+  // 测评明细
+  const [evalList, setEvalList] = useState<EvalListItem[]>([])
+  const [evalOffset, setEvalOffset] = useState(0)
+  const [evalHasMore, setEvalHasMore] = useState(false)
+  const [evalLoading, setEvalLoading] = useState(false)
+  const [expandedEvalId, setExpandedEvalId] = useState<string | null>(null)
+  const [expandedRawKey, setExpandedRawKey] = useState<string | null>(null)
+  // 灯箱
+  const [lightboxImages, setLightboxImages] = useState<Array<{ label: string; url: string }>>([])
+  const [lightboxIndex, setLightboxIndex] = useState(0)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
 
   useEffect(() => {
     if (isMock) {
@@ -41,9 +92,16 @@ export default function CoursewarePage() {
       return
     }
 
-    Promise.all([fetchCoursewareComparison(), fetchCoursewareVersions()]).then(([comp, vers]) => {
+    Promise.all([
+      fetchCoursewareComparison(),
+      fetchCoursewareVersions(),
+      fetchEvalList(0, 10),
+    ]).then(([comp, vers, evalResult]) => {
       setCoursewareComparison(comp)
       setCoursewareVersions(vers)
+      setEvalList(evalResult.data)
+      setEvalHasMore(evalResult.hasMore)
+      setEvalOffset(10)
       setLoading(false)
 
       const self = comp.find(c => c.platform === 'self_skill')
@@ -74,6 +132,32 @@ export default function CoursewarePage() {
     })
   }, [isMock])
 
+  const loadMoreEvals = async () => {
+    setEvalLoading(true)
+    try {
+      const result = await fetchEvalList(evalOffset, 10)
+      setEvalList(prev => [...prev, ...result.data])
+      setEvalHasMore(result.hasMore)
+      setEvalOffset(prev => prev + 10)
+    } catch (e) {
+      console.error('加载更多测评记录失败:', e)
+    } finally {
+      setEvalLoading(false)
+    }
+  }
+
+  // 灯箱键盘导航
+  useEffect(() => {
+    if (!lightboxOpen) return
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxOpen(false)
+      if (e.key === 'ArrowLeft') setLightboxIndex(i => (i - 1 + lightboxImages.length) % lightboxImages.length)
+      if (e.key === 'ArrowRight') setLightboxIndex(i => (i + 1) % lightboxImages.length)
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [lightboxOpen, lightboxImages.length])
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 text-slate-500">
@@ -81,7 +165,6 @@ export default function CoursewarePage() {
       </div>
     )
   }
-
   if (coursewareComparison.length === 0) {
     return (
       <div className="flex items-center justify-center h-64 text-slate-500">
@@ -391,6 +474,286 @@ export default function CoursewarePage() {
           ))}
         </div>
       </div>
+
+      {/* Row 5: 测评明细 */}
+      <div className="card-enter" style={{ animationDelay: '0.4s' }}>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <span className="section-title">测评明细</span>
+        </div>
+
+        <div className="card overflow-hidden mt-4">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-800/40">
+                {['时间', '课件名称', '平台', '迭代轮次', '评分', '操作'].map(h => (
+                  <th key={h} className="text-left px-6 py-4 text-sm font-medium text-slate-500">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {evalList.map((item) => {
+                const previewUrl = getCoursewarePreviewUrl(item)
+                const isExpanded = expandedEvalId === item.id
+                const rawKeyMap: Record<string, string> = {
+                  d1: 'a1_raw_output',
+                  d2: 'a2_raw_output',
+                  d3: 'b_raw_output',
+                  d4: 'c_raw_output',
+                }
+                return (
+                  <Fragment key={item.id}>
+                    <tr className="border-b border-slate-800/20 transition-colors hover:bg-white/[0.02]">
+                      <td className="px-6 py-4 text-slate-500 text-sm font-mono">{formatTime(item.created_at)}</td>
+                      <td className="px-6 py-4">
+                        <a
+                          href={previewUrl || '#'}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 decoration-indigo-400/30 hover:decoration-indigo-300/60 transition-colors cursor-pointer"
+                        >
+                          {item.title}
+                        </a>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="badge">{SOURCE_LABELS[item.source] || item.source}</span>
+                      </td>
+                      <td className="px-6 py-4 text-slate-400 text-sm">V{item.iteration_round}</td>
+                      <td className="px-6 py-4">
+                        <span className={`font-semibold font-mono`} style={{ color: getScoreColor(item.composite_score) }}>
+                          {item.composite_score.toFixed(2)}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <button
+                          onClick={() => {
+                            setExpandedEvalId(isExpanded ? null : item.id)
+                            setExpandedRawKey(null)
+                          }}
+                          className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+                        >
+                          {isExpanded ? '收起详情 ▲' : '查看详情 ▼'}
+                        </button>
+                      </td>
+                    </tr>
+
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-6" style={{ background: 'rgba(15,23,42,0.3)', borderTop: '1px solid rgba(51,65,85,0.4)' }}>
+                          {(item.feedbacks || item.audit_data) ? (
+                            <div className="space-y-6">
+                              {/* 区域A: 四维评审卡片 */}
+                              <div>
+                                <div className="text-sm font-semibold text-slate-300 mb-3">📋 四维评审详情</div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                                  {(['d1', 'd2', 'd3', 'd4'] as const).map(d => {
+                                    const score = item.scores?.[d] || 0
+                                    const feedback = item.feedbacks?.[d] || '暂无评语'
+                                    const rawKey = rawKeyMap[d]
+                                    const rawContent = item.audit_data?.[rawKey] || null
+                                    const isRawExpanded = expandedRawKey === `${item.id}-${d}`
+                                    return (
+                                      <div key={d} className="rounded-xl p-4" style={{ background: 'rgba(30,41,59,0.4)', border: '1px solid rgba(51,65,85,0.3)' }}>
+                                        <div className="flex items-center justify-between mb-2">
+                                          <span className="text-xs text-slate-500">{dimLabels[d]}</span>
+                                          <span className="text-lg font-bold font-mono" style={{ color: getScoreColor(score) }}>{score}</span>
+                                        </div>
+                                        <div className="text-xs text-slate-400 leading-relaxed mb-2" style={{ minHeight: '40px' }}>
+                                          {feedback}
+                                        </div>
+                                        {rawContent && (
+                                          <div>
+                                            <button
+                                              onClick={() => setExpandedRawKey(isRawExpanded ? null : `${item.id}-${d}`)}
+                                              className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
+                                            >
+                                              {isRawExpanded ? '收起原文 ▲' : '评审原文 ▼'}
+                                            </button>
+                                            {isRawExpanded && (
+                                              <pre className="mt-2 p-3 rounded-lg text-xs text-slate-500 overflow-auto" style={{ background: 'rgba(15,23,42,0.5)', maxHeight: '192px' }}>
+                                                {rawContent}
+                                              </pre>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* 区域B: Browser Use 交互证据 */}
+                              {item.browser_use_result && (
+                                <div>
+                                  <div className="text-sm font-semibold text-slate-300 mb-3">🖥️ Browser Use 交互证据</div>
+
+                                  {/* 截图网格 + 点击打开灯箱 */}
+                                  {item.browser_use_result.screenshot_urls?.length > 0 && (
+                                    <div className="mb-4">
+                                      <div className="text-xs text-slate-500 mb-2">📸 自动化截图（点击查看大图，支持左右切换）</div>
+                                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                                        {item.browser_use_result.screenshot_urls.map((img: any, idx: number) => (
+                                          <div
+                                            key={idx}
+                                            className="cursor-pointer group rounded-lg overflow-hidden border border-slate-700/30 hover:border-indigo-500/40 transition-all"
+                                            onClick={() => {
+                                              setLightboxImages(item.browser_use_result.screenshot_urls)
+                                              setLightboxIndex(idx)
+                                              setLightboxOpen(true)
+                                            }}
+                                          >
+                                            <img src={img.url} alt={img.label} className="w-full h-32 object-cover group-hover:scale-105 transition-transform duration-300" />
+                                            <div className="text-xs text-slate-600 p-2 truncate">{img.label}</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* 视频播放器 */}
+                                  {item.browser_use_result.video_urls?.length > 0 && (
+                                    <div className="mb-4">
+                                      <div className="text-xs text-slate-500 mb-2">🎬 交互录屏</div>
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {item.browser_use_result.video_urls.map((vid: any, idx: number) => (
+                                          <div key={idx} className="rounded-lg overflow-hidden border border-slate-700/30" style={{ background: 'rgba(15,23,42,0.5)' }}>
+                                            <video
+                                              controls
+                                              preload="metadata"
+                                              className="w-full rounded-t-lg"
+                                              style={{ maxHeight: '280px' }}
+                                            >
+                                              <source src={vid.url} type="video/webm" />
+                                              您的浏览器不支持视频播放
+                                            </video>
+                                            <div className="text-xs text-slate-600 p-2">录屏 {idx + 1}: {vid.label}</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* 交互日志 */}
+                                  {item.browser_use_result.interaction_log?.length > 0 && (
+                                    <div className="mb-3">
+                                      <div className="text-xs text-slate-500 mb-2">📝 交互测试日志</div>
+                                      <div className="rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.4)' }}>
+                                        {item.browser_use_result.interaction_log.map((log: any, idx: number) => (
+                                          <div key={idx} className="text-xs text-slate-400 flex items-start gap-2 py-1">
+                                            <span className="text-indigo-400/60 font-mono flex-shrink-0 w-24">[{log.test_case}]</span>
+                                            <span>{log.description}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Console 错误 */}
+                                  {item.browser_use_result.console_errors?.length > 0 && (
+                                    <div>
+                                      <div className="text-xs text-slate-500 mb-2">⚠️ Console 错误</div>
+                                      <div className="rounded-lg p-3" style={{ background: 'rgba(127,29,29,0.1)' }}>
+                                        {item.browser_use_result.console_errors.map((err: string, idx: number) => (
+                                          <div key={idx} className="text-xs text-rose-400/80 py-0.5 font-mono">{err}</div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-slate-600 text-center py-4">暂无评审详情数据</div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
+              {evalList.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center text-slate-600">暂无测评记录</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+
+          {evalHasMore && (
+            <div className="flex justify-center py-4 border-t border-slate-800/20">
+              <button
+                onClick={loadMoreEvals}
+                disabled={evalLoading}
+                className="px-6 py-2.5 rounded-xl text-sm font-medium text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/5 transition-all disabled:opacity-50"
+              >
+                {evalLoading ? (
+                  <span className="flex items-center gap-2">
+                    <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                    加载中...
+                  </span>
+                ) : (
+                  '查看更多 ↓'
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 图片灯箱模态框 */}
+      {lightboxOpen && lightboxImages.length > 0 && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.85)' }}
+          onClick={() => setLightboxOpen(false)}
+        >
+          {/* 关闭按钮 */}
+          <button
+            className="absolute top-6 right-6 text-white/60 hover:text-white text-3xl z-10 transition-colors"
+            onClick={() => setLightboxOpen(false)}
+          >
+            ✕
+          </button>
+
+          {/* 左箭头 */}
+          {lightboxImages.length > 1 && (
+            <button
+              className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 text-2xl transition-all z-10"
+              onClick={(e) => {
+                e.stopPropagation()
+                setLightboxIndex((lightboxIndex - 1 + lightboxImages.length) % lightboxImages.length)
+              }}
+            >
+              ❮
+            </button>
+          )}
+
+          {/* 图片 */}
+          <div className="max-w-[90vw] max-h-[85vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={lightboxImages[lightboxIndex]?.url}
+              alt={lightboxImages[lightboxIndex]?.label}
+              className="max-w-full max-h-[78vh] object-contain rounded-lg"
+            />
+            <div className="mt-3 text-sm text-slate-400 text-center">
+              {lightboxImages[lightboxIndex]?.label}
+              <span className="ml-3 text-slate-600">{lightboxIndex + 1} / {lightboxImages.length}</span>
+            </div>
+          </div>
+
+          {/* 右箭头 */}
+          {lightboxImages.length > 1 && (
+            <button
+              className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 text-2xl transition-all z-10"
+              onClick={(e) => {
+                e.stopPropagation()
+                setLightboxIndex((lightboxIndex + 1) % lightboxImages.length)
+              }}
+            >
+              ❯
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
