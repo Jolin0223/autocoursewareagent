@@ -183,13 +183,15 @@ function extractCons(scores: { d1: number; d2: number; d3: number; d4: number })
   return cons
 }
 
+// ==================== 评审详情（单课件） ====================
+
 export interface EvalDetail {
   feedbacks: Record<string, string>
   browser_use_result: {
     success: boolean
-    screenshot_urls: Array<{label: string, url: string}>
-    video_urls: Array<{label: string, url: string}>
-    interaction_log: Array<{test_case: string, description: string, steps?: any[]}>
+    screenshot_urls: Array<{ label: string; url: string }>
+    video_urls: Array<{ label: string; url: string }>
+    interaction_log: Array<{ test_case: string; description: string; steps?: any[] }>
     console_errors: string[]
   } | null
   audit_data: {
@@ -200,42 +202,154 @@ export interface EvalDetail {
   } | null
   history: Array<{
     iteration_round: number
-    scores: {d1: number, d2: number, d3: number, d4: number}
+    scores: { d1: number; d2: number; d3: number; d4: number }
     composite_score: number
   }>
 }
 
 export async function fetchEvalDetail(coursewareId: string): Promise<EvalDetail | null> {
-  // 1. 查 evaluation_history 表，where courseware_id = 参数，order by iteration_round DESC
   const { data: evalHistory, error } = await supabase
     .from('evaluation_history')
     .select('iteration_round, feedbacks, browser_use_result, audit_data, scores, composite_score')
     .eq('courseware_id', coursewareId)
     .order('iteration_round', { ascending: false })
 
-  // 5. 如果没数据返回 null
   if (error || !evalHistory || evalHistory.length === 0) {
     return null
   }
 
-  // 2. 取第一条（最新轮次）的 feedbacks, browser_use_result, audit_data
   const latestRound = evalHistory[0]
 
-  // 3. 再查所有轮次的 iteration_round, scores, composite_score 作为 history
-  // 直接利用已查出的数据在内存中按 ASC 排序，减少一次查表请求
   const history = evalHistory
     .map(item => ({
       iteration_round: item.iteration_round,
       scores: item.scores,
-      composite_score: item.composite_score
+      composite_score: item.composite_score,
     }))
     .sort((a, b) => a.iteration_round - b.iteration_round)
 
-  // 4. 返回 EvalDetail 对象
   return {
     feedbacks: latestRound.feedbacks || {},
     browser_use_result: latestRound.browser_use_result || null,
     audit_data: latestRound.audit_data || null,
-    history
+    history,
+  }
+}
+
+// ==================== 测评明细列表 ====================
+
+export interface EvalListItem {
+  id: string
+  courseware_id: string
+  title: string
+  source: string
+  composite_score: number
+  scores: { d1: number; d2: number; d3: number; d4: number }
+  iteration_round: number
+  created_at: string
+  feedbacks: Record<string, string> | null
+  browser_use_result: any | null
+  audit_data: any | null
+  file_url: string | null
+  html_snapshot: string | null
+  courseware_source: string
+}
+
+export async function fetchEvalList(
+  offset: number = 0,
+  limit: number = 10
+): Promise<{ data: EvalListItem[]; hasMore: boolean }> {
+  const { data, error } = await supabase
+    .from('evaluation_history')
+    .select(
+      'id, courseware_id, iteration_round, scores, composite_score, created_at, feedbacks, browser_use_result, audit_data, file_url, html_snapshot, courseware!evaluation_history_courseware_id_fkey(title, source)'
+    )
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit) // 多取1条判断 hasMore
+
+  if (error || !data) {
+    return { data: [], hasMore: false }
+  }
+
+  const hasMore = data.length > limit
+  const sliced = hasMore ? data.slice(0, limit) : data
+
+  const items: EvalListItem[] = sliced.map((row: any) => ({
+    id: row.id,
+    courseware_id: row.courseware_id,
+    title: row.courseware?.title || '未知课件',
+    source: row.courseware?.source || 'unknown',
+    composite_score: row.composite_score || 0,
+    scores: row.scores || { d1: 0, d2: 0, d3: 0, d4: 0 },
+    iteration_round: row.iteration_round,
+    created_at: row.created_at,
+    feedbacks: row.feedbacks || null,
+    browser_use_result: row.browser_use_result || null,
+    audit_data: row.audit_data || null,
+    file_url: row.file_url || null,
+    html_snapshot: row.html_snapshot || null,
+    courseware_source: row.courseware?.source || 'unknown',
+  }))
+
+  return { data: items, hasMore }
+}
+
+// AI 评审摘要（实时调用门神API）
+const MENSHEN_URL = 'https://menshen-code.test.xdf.cn/v1/chat/completions'
+const MENSHEN_KEY = '15ba617c831b45f1bcad1d76e109bc135d51adfe'
+const MENSHEN_MODEL = 'gemini-3.0-flash-preview'
+
+const DIM_NAMES: Record<string, string> = {
+  d1: '知识准确性',
+  d2: '教学设计',
+  d3: '交互质量',
+  d4: '视觉设计',
+}
+
+export async function summarizeReview(
+  dimension: string,
+  rawOutput: string,
+  score: number,
+  feedback: string
+): Promise<{ highlights: string[]; issues: string[]; suggestions: string[] }> {
+  const dimName = DIM_NAMES[dimension] || dimension
+  const prompt = `你是课件评测报告的摘要助手。请将以下AI评审员的原始输出总结为结构化要点，让非技术背景的评委快速理解。
+
+维度：${dimName}（评分：${score}/5）
+评语：${feedback}
+
+评审原文：
+${rawOutput.slice(0, 3000)}
+
+请严格按以下JSON格式输出，每项1-3条，每条不超过30字：
+{"highlights": ["亮点1", ...], "issues": ["问题1", ...], "suggestions": ["建议1", ...]}
+
+只输出JSON，不要其他内容。`
+
+  try {
+    const resp = await fetch(MENSHEN_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${MENSHEN_KEY}`,
+      },
+      body: JSON.stringify({
+        model: MENSHEN_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 300,
+        temperature: 0.3,
+      }),
+    })
+    const data = await resp.json()
+    const content = data.choices?.[0]?.message?.content || ''
+    // 提取JSON
+    const jsonMatch = content.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0])
+    }
+    return { highlights: [], issues: [], suggestions: [] }
+  } catch (e) {
+    console.error('AI摘要调用失败:', e)
+    return { highlights: [], issues: [], suggestions: [] }
   }
 }
