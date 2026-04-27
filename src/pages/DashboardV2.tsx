@@ -83,12 +83,14 @@ function renderLogWithLink(message: string, planTitle: string, coursewareId: str
 
 const agentColors = ['#6366f1', '#b3feff', '#34d399', '#fbbf24']
 const agentIcons = ['/icons/agent-1.png', '/icons/agent-2.png', '/icons/agent-3.png', '/icons/agent-4.png']
+const statusLabel: Record<string, string> = { running: '运行中', processing: '处理中', idle: '等待中', completed: '已完成', error: '异常' }
+const statusDotColor: Record<string, string> = { running: 'bg-emerald-400', processing: 'bg-amber-400', idle: 'bg-slate-500', completed: 'bg-emerald-400', error: 'bg-rose-400' }
 
 const agentSteps: Record<number, string[]> = {
-  1: ['扫描飞象热门榜单', '分析教师历史偏好', '匹配需求与教师', '触发生产任务'],
-  2: ['飞象/老师帮/自研Skill', 'V1→V3迭代生成', '输出课件文件'],
-  3: ['四维评审打分', '知识/教学/系统/视觉', '计算综合得分', '判定通过/修复'],
-  4: ['生成飞书卡片', '推送至教师', '展示课件预览', '收集教师反馈'],
+  1: ['分析教师教学偏好', '扫描外部热门资源', '匹配需求与教师画像', '触发每日自动生产'],
+  2: ['飞象/好未来/自研Skill', '三源并行选最优', '3轮迭代优胜劣汰','交付可用互动课件'],
+  3: ['智能生成测试用例', '浏览器自动化交互', '逐步截屏全程录屏', '四维打分智能评审'],
+  4: ['飞书卡片智能生成', '一键推送匹配教师', '上架/退回/修改/评分', '收集反馈闭环回流 '],
 }
 
 export default function DashboardV2({ focusAgent }: { focusAgent: number | null }) {
