@@ -63,6 +63,7 @@ export default function CoursewarePage() {
   const { isMock } = useMockMode()
   const [coursewareComparison, setCoursewareComparison] = useState<CoursewareCompareItem[]>([])
   const [coursewareVersions, setCoursewareVersions] = useState<CoursewareVersion[]>([])
+  const [evalCount, setEvalCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [diagnosisAdvice, setDiagnosisAdvice] = useState<{ knowledge: string; teaching: string; interaction: string; visual: string } | null>(null)
 
@@ -96,8 +97,10 @@ export default function CoursewarePage() {
       fetchCoursewareComparison(),
       fetchCoursewareVersions(),
       fetchEvalList(0, 10),
-    ]).then(([comp, vers, evalResult]) => {
+    ]).then(([compResult, vers, evalResult]) => {
+      const comp = compResult.items
       setCoursewareComparison(comp)
+      setEvalCount(compResult.evalCount)
       setCoursewareVersions(vers)
       setEvalList(evalResult.data)
       setEvalHasMore(evalResult.hasMore)
@@ -205,12 +208,12 @@ export default function CoursewarePage() {
         <div className="card p-6 card-enter flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-sm text-slate-500 font-medium">评测课件数</span>
-              <InfoButton metricName="评测课件数" metricValue={coursewareComparison.length} context={{ platforms: coursewareComparison.map(c => c.platformLabel) }} />
+              <span className="text-sm text-slate-500 font-medium">评测次数</span>
+              <InfoButton metricName="评测次数" metricValue={evalCount} context={{ platforms: coursewareComparison.map(c => c.platformLabel) }} />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold stat-value text-white">{coursewareComparison.length}</span>
-              <span className="text-sm text-slate-500">个课件</span>
+              <span className="text-4xl font-bold stat-value text-white">{evalCount}</span>
+              <span className="text-sm text-slate-500">次评测</span>
             </div>
           </div>
           <img src="/icons/评测课件.png" alt="评测课件" className="w-10 h-10" />
