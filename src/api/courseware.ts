@@ -23,7 +23,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   laoshibang: '好未来老师帮',
 }
 
-const VALID_STATUSES = ['manual_review', 'iterating', 'done', 'pushed', 'approved', 'rejected']
+const VALID_STATUSES = ['evaluated', 'manual_review', 'iterating', 'done', 'pushed', 'approved', 'rejected']
 
 export async function fetchCoursewareComparison(): Promise<CoursewareCompareItem[]> {
   const { data: coursewares } = await supabase
