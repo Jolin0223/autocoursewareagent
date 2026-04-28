@@ -131,10 +131,10 @@ export default function DashboardV2({ focusAgent }: { focusAgent: number | null 
 
     const poll = setInterval(async () => {
       try {
-        const [s, a] = await Promise.all([fetchTodayStats(), fetchAgentStatuses()])
-        if (!cancelled) { setStats(s); setAgents(a) }
+        const [s, a, l] = await Promise.all([fetchTodayStats(), fetchAgentStatuses(), fetchRecentLogs(50)])
+        if (!cancelled) { setStats(s); setAgents(a); setLogs(l) }
       } catch {}
-    }, 30000)
+    }, 15000)
 
     return () => { cancelled = true; clearInterval(poll) }
   }, [isMock])
