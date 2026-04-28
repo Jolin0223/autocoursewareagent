@@ -115,7 +115,7 @@ export default function DashboardV2({ focusAgent }: { focusAgent: number | null 
         const [s, a, l] = await Promise.all([
           fetchTodayStats(),
           fetchAgentStatuses(),
-          fetchRecentLogs(50),
+          fetchRecentLogs(100),
         ])
         if (cancelled) return
         setStats(s)
@@ -131,7 +131,7 @@ export default function DashboardV2({ focusAgent }: { focusAgent: number | null 
 
     const poll = setInterval(async () => {
       try {
-        const [s, a, l] = await Promise.all([fetchTodayStats(), fetchAgentStatuses(), fetchRecentLogs(50)])
+        const [s, a, l] = await Promise.all([fetchTodayStats(), fetchAgentStatuses(), fetchRecentLogs(100)])
         if (!cancelled) { setStats(s); setAgents(a); setLogs(l) }
       } catch {}
     }, 15000)
@@ -204,7 +204,7 @@ export default function DashboardV2({ focusAgent }: { focusAgent: number | null 
             icon: '🏭',
             message,
             highlight: false,
-          }, ...prev].slice(0, 50))
+          }, ...prev].slice(0, 100))
           
           sourceLastLogTimeRef.current[source] = Date.now()
         }
@@ -212,7 +212,7 @@ export default function DashboardV2({ focusAgent }: { focusAgent: number | null 
     }
 
     const unsub = subscribeLogs((newLog: LogEntry) => {
-      setLogs(prev => [newLog, ...prev].slice(0, 50))
+      setLogs(prev => [newLog, ...prev].slice(0, 100))
 
       // 实时更新 agent 状态，让卡片即时高亮
       const agentIdx = newLog.agent - 1
