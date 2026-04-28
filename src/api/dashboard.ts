@@ -78,17 +78,17 @@ export async function fetchTodayStats() {
       .select('id', { count: 'exact', head: true })
       .gte('created_at', `${today}T00:00:00`)
       .lt('created_at', `${today}T23:59:59`),
-    // 评审通过：courseware 今日 approved 数
+    // 评审通过：courseware 今日 evaluated/approved/pushed 数（有评分即算通过）
     supabase
       .from('courseware')
       .select('id', { count: 'exact', head: true })
       .gte('created_at', `${today}T00:00:00`)
       .lt('created_at', `${today}T23:59:59`)
-      .in('status', ['approved', 'pushed']),
-    // 推送成功：courseware 今日 pushed 数
+      .in('status', ['evaluated', 'approved', 'pushed', 'done']),
+    // 推送成功：courseware 今日 pushed，按 teacher_id 去重
     supabase
       .from('courseware')
-      .select('id', { count: 'exact', head: true })
+      .select('teacher_id')
       .gte('created_at', `${today}T00:00:00`)
       .lt('created_at', `${today}T23:59:59`)
       .eq('status', 'pushed'),
@@ -97,7 +97,9 @@ export async function fetchTodayStats() {
   const planCount = planRes.count ?? 0
   const cwCount = cwRes.count ?? 0
   const approvedCount = approvedRes.count ?? 0
-  const pushedCount = pushedRes.count ?? 0
+  // 推送成功：按 teacher_id 去重
+  const pushedTeachers = new Set((pushedRes.data || []).map((r: any) => r.teacher_id).filter(Boolean))
+  const pushedCount = pushedTeachers.size
   const passRate = cwCount > 0 ? Math.round((approvedCount / cwCount) * 100) : 0
 
   return [
