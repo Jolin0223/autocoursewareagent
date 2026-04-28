@@ -547,9 +547,21 @@ export default function CoursewarePage() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                                   {(['d1', 'd2', 'd3', 'd4'] as const).map(d => {
                                     const score = item.scores?.[d] || 0
-                                    const feedback = item.feedbacks?.[d] || '暂无评语'
                                     const rawKey = rawKeyMap[d]
-                                    const rawContent = item.audit_data?.[rawKey] || null
+                                    // audit_data 中每个 key 的值可能是 {raw_output: "..."} 嵌套对象
+                                    const rawEntry = item.audit_data?.[rawKey]
+                                    const rawContent = rawEntry
+                                      ? (typeof rawEntry === 'string' ? rawEntry : (rawEntry?.raw_output ?? JSON.stringify(rawEntry)))
+                                      : null
+                                    // feedbacks 可能为空，从 audit_data 的 raw_output JSON 中提取 comment 作为 fallback
+                                    let feedback = item.feedbacks?.[d] || ''
+                                    if (!feedback && rawContent) {
+                                      try {
+                                        const parsed = JSON.parse(rawContent)
+                                        feedback = parsed?.[`${d}_comment`] || ''
+                                      } catch {}
+                                    }
+                                    if (!feedback) feedback = '暂无评语'
                                     const isRawExpanded = expandedRawKey === `${item.id}-${d}`
                                     return (
                                       <div key={d} className="rounded-xl p-4" style={{ background: 'rgba(30,41,59,0.4)', border: '1px solid rgba(51,65,85,0.3)' }}>
